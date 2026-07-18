@@ -241,6 +241,6 @@ jobs:
             TIME=$(date -u +"%H:%M")
             TYPE="${{ steps.detect.outputs.type }}"
             git commit -m "chore(snapshot): ${TYPE} capture ${DATE} ${TIME} UTC [skip ci]"
-            git push origin main
+            git push origin HEAD
             echo "[Git] Pushed ${TYPE} snapshot for ${DATE} ${TIME} UTC"
           fi
