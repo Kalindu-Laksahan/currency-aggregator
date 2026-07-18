@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <!-- SEO -->
+  <title>ExchangeWatch LK — Sri Lanka Live Currency Exchange Rates</title>
+  <meta name="description" content="Compare live buying and selling currency exchange rates from all major Sri Lankan commercial banks in real-time. Find the best USD, GBP, EUR, AED and 20+ currency rates." />
+  <meta name="keywords" content="Sri Lanka exchange rates, LKR currency, bank rates Sri Lanka, USD LKR, forex Sri Lanka, buy sell currency" />
+  <meta name="author" content="ExchangeWatch LK" />
+  <meta property="og:title" content="ExchangeWatch LK — Sri Lanka Live Currency Rates" />
+  <meta property="og:description" content="Compare live buying and selling currency exchange rates from all major Sri Lankan banks." />
+  <meta property="og:type" content="website" />
+  <meta name="theme-color" content="#070b14" />
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+  <!-- Chart.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+  <!-- App Styles -->
+  <link rel="stylesheet" href="style.css" />
+</head>
+
+<body>
+
+  <!-- Animated Background -->
+  <div class="bg-canvas" aria-hidden="true">
+    <div class="orb orb-1"></div>
+    <div class="orb orb-2"></div>
+    <div class="orb orb-3"></div>
+  </div>
+
+  <div class="app-wrapper">
+
+    <!-- ========================================================
+         HEADER
+         ======================================================== -->
+    <header class="site-header" role="banner">
+      <div class="header-inner">
+
+        <div class="logo-group">
+          <div class="logo-icon-wrap" aria-hidden="true">💱</div>
+          <div class="logo-text">
+            <h1>ExchangeWatch LK</h1>
+            <p>Sri Lanka Currency Aggregator</p>
+          </div>
+        </div>
+
+        <div class="header-meta">
+          <div class="live-badge" role="status" aria-label="Live rates indicator">
+            <span class="pulse-dot" aria-hidden="true"></span>
+            <span>Live Rates</span>
+          </div>
+          <div id="last-updated" class="last-updated" aria-live="polite">Fetching…</div>
+        </div>
+
+      </div>
+    </header>
+
+    <!-- ========================================================
+         MAIN CONTENT
+         ======================================================== -->
+    <main class="main-content" id="main-content" role="main">
+
+      <!-- Hero Banner -->
+      <section class="hero-banner" aria-label="Dashboard overview">
+        <div>
+          <div class="hero-title">
+            Sri Lanka <span>Bank Exchange Rates</span>
+          </div>
+          <p class="hero-subtitle">
+            Live buying &amp; selling rates from 20 commercial banks · Data sourced from Google Sheets
+          </p>
+        </div>
+        <div class="hero-stats" aria-label="Quick statistics">
+          <div class="hero-stat">
+            <div class="hero-stat-num" id="hero-banks">20</div>
+            <div class="hero-stat-label">Banks</div>
+          </div>
+          <div class="hero-stat">
+            <div class="hero-stat-num">24</div>
+            <div class="hero-stat-label">Currencies</div>
+          </div>
+          <div class="hero-stat">
+            <div class="hero-stat-num">30</div>
+            <div class="hero-stat-label">Day History</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Controls Bar -->
+      <section class="controls-bar" aria-label="Rate filter controls">
+
+        <!-- Currency Selector -->
+        <div class="selector-group">
+          <label class="selector-label" for="currency-select">Select Currency</label>
+          <div class="custom-select-wrapper">
+            <select
+              id="currency-select"
+              class="custom-select"
+              aria-label="Currency selection dropdown"
+            >
+              <!-- Populated by app.js -->
+            </select>
+            <span class="select-chevron" aria-hidden="true">▾</span>
+          </div>
+        </div>
+
+        <!-- Buy / Sell Tab Slider -->
+        <div class="tab-slider-wrapper">
+          <span class="tab-slider-label">Rate Type</span>
+          <div class="tab-slider" role="tablist" aria-label="Rate type selector" id="mode-tabs">
+            <div class="tab-indicator" aria-hidden="true"></div>
+            <button
+              id="tab-buying"
+              class="tab-btn active"
+              role="tab"
+              aria-selected="true"
+              aria-controls="rates-container"
+              data-mode="buying"
+            >
+              📈 Buying Rates (Cash In)
+            </button>
+            <button
+              id="tab-selling"
+              class="tab-btn"
+              role="tab"
+              aria-selected="false"
+              aria-controls="rates-container"
+              data-mode="selling"
+            >
+              📤 Selling (Outward Remittance)
+            </button>
+          </div>
+        </div>
+
+      </section>
+
+      <!-- Stats Strip -->
+      <section
+        class="stats-strip hidden"
+        id="stats-strip"
+        aria-label="Rate statistics"
+        aria-live="polite"
+      >
+        <div class="stat-tile">
+          <div class="stat-tile-label">Best Rate</div>
+          <div class="stat-tile-value" id="stat-best">—</div>
+        </div>
+        <div class="stat-tile">
+          <div class="stat-tile-label">Lowest Rate</div>
+          <div class="stat-tile-value" id="stat-worst">—</div>
+        </div>
+        <div class="stat-tile">
+          <div class="stat-tile-label">Rate Range %</div>
+          <div class="stat-tile-value" id="stat-spread">—</div>
+        </div>
+        <div class="stat-tile">
+          <div class="stat-tile-label">Banks Reporting</div>
+          <div class="stat-tile-value" id="stat-banks">—</div>
+        </div>
+      </section>
+
+      <!-- ======================================================
+           SKELETON LOADER
+           ====================================================== -->
+      <div
+        class="skeleton-container"
+        id="skeleton-container"
+        role="status"
+        aria-label="Loading exchange rate data"
+        aria-busy="true"
+      >
+        <!-- Skeleton header -->
+        <div class="skeleton-header">
+          <div class="skeleton-block skeleton-cell-bank" style="width:180px;height:20px;"></div>
+          <div class="skeleton-block" style="width:80px;height:16px;border-radius:100px;margin-left:12px;"></div>
+        </div>
+
+        <!-- Skeleton column headers (visual only) -->
+        <div class="skeleton-row" style="background:rgba(0,0,0,0.1);border-bottom:1px solid rgba(255,255,255,0.05);">
+          <div class="skeleton-block" style="width:100px;height:12px;opacity:0.5;"></div>
+          <div class="skeleton-block skeleton-cell-rate" style="width:80px;height:12px;opacity:0.5;"></div>
+          <div class="skeleton-block skeleton-cell-spread" style="width:60px;height:12px;opacity:0.5;"></div>
+          <div class="skeleton-block skeleton-cell-badge" style="width:60px;height:12px;opacity:0.5;"></div>
+        </div>
+
+        <!-- 20 skeleton data rows injected by JS -->
+        <div id="skeleton-rows"></div>
+      </div>
+
+      <!-- ======================================================
+           LIVE RATES TABLE
+           ====================================================== -->
+      <div
+        class="rates-container hidden"
+        id="rates-container"
+        role="tabpanel"
+        aria-label="Live exchange rates table"
+        aria-live="polite"
+      >
+        <!-- Table title bar -->
+        <div class="table-header-bar">
+          <div class="table-title">
+            <span id="table-mode-label">Buying Rates</span>
+            <span class="table-count-badge" id="table-count-badge">20 banks</span>
+          </div>
+          <div style="font-size:12px;color:var(--text-muted);">
+            Sorted by best rate · <span id="selected-currency-label">USD</span>
+          </div>
+        </div>
+
+        <!-- Rates Table -->
+        <div style="overflow-x:auto;">
+          <table id="rates-table" aria-label="Bank exchange rates">
+            <thead>
+              <tr>
+                <th scope="col" style="min-width:200px;">Bank</th>
+                <th scope="col" style="text-align:right; min-width:150px;">Rate (LKR)</th>
+                <th scope="col" style="text-align:right; min-width:120px;">vs. Best</th>
+                <th scope="col" style="text-align:center; min-width:130px;">Value</th>
+              </tr>
+            </thead>
+            <tbody id="rates-body" aria-label="Exchange rate rows">
+              <!-- Populated by app.js -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ======================================================
+           HISTORICAL CHART SECTION
+           ====================================================== -->
+      <section class="chart-section" aria-label="30-day historical rate chart">
+
+        <div class="chart-header">
+          <div class="chart-header-left">
+            <div class="chart-title">📊 30-Day Rate History</div>
+            <div class="chart-subtitle" id="chart-subtitle">
+              Buying rates trend across all banks
+            </div>
+          </div>
+          <div class="chart-controls" role="group" aria-label="Chart rate type selector">
+            <button
+              id="chart-buying-btn"
+              class="chart-mode-btn active"
+              aria-pressed="true"
+              aria-label="Show buying rates chart"
+            >
+              Buying
+            </button>
+            <button
+              id="chart-selling-btn"
+              class="chart-mode-btn"
+              aria-pressed="false"
+              aria-label="Show selling rates chart"
+            >
+              Selling
+            </button>
+          </div>
+        </div>
+
+        <div class="chart-body">
+          <div class="chart-canvas-wrap">
+            <canvas
+              id="history-chart"
+              role="img"
+              aria-label="Line chart showing 30-day historical exchange rates"
+            ></canvas>
+          </div>
+
+          <p
+            class="chart-no-data hidden"
+            id="chart-no-data"
+            role="status"
+            aria-live="polite"
+          >
+            <span class="no-data-icon" aria-hidden="true">📭</span><br />
+            Historical data will appear here after the first automated nightly snapshot runs.<br />
+            <small style="font-size:11px;color:var(--text-muted);margin-top:6px;display:block;">
+              The GitHub Actions workflow captures data at 11:45 PM UTC every night.
+            </small>
+          </p>
+        </div>
+
+      </section>
+
+    </main>
+
+    <!-- ========================================================
+         FOOTER
+         ======================================================== -->
+    <footer class="site-footer" role="contentinfo">
+      <div class="footer-inner">
+        <span>
+          © 2026 ExchangeWatch LK · Data powered by Google Sheets · For informational purposes only · Not financial advice
+        </span>
+        <div class="footer-links">
+          <a
+            href="https://docs.google.com/spreadsheets/d/1ZXvoy_yDJEFN5LA3mrCFzg7L2REZ3gY4X4mQIXJ-r1Q/edit"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="footer-link"
+            aria-label="View source Google Sheet (opens in new tab)"
+          >
+            View Source Sheet ↗
+          </a>
+        </div>
+      </div>
+    </footer>
+
+  </div><!-- /.app-wrapper -->
+
+  <!-- Application Script -->
+  <script src="app.js"></script>
+
+</body>
+</html>

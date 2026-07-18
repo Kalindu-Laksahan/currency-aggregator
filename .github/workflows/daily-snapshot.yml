@@ -1,0 +1,276 @@
+# ================================================================
+# ExchangeWatch LK — Rate Snapshot Workflow
+# ================================================================
+#
+# Runs THREE times per day (all times UTC):
+#   ┌─ 07:45 UTC  → Morning snapshot   (appends intraday entry)
+#   ├─ 13:45 UTC  → Afternoon snapshot (appends intraday entry)
+#   └─ 23:45 UTC  → Evening snapshot   (CONSOLIDATES: removes today's
+#                                       morning & afternoon entries,
+#                                       keeps only the final 23:45
+#                                       record for that day)
+#
+# After consolidation at 23:45, history.json holds ONE entry per day,
+# capped at the last 30 days (never grows beyond 30 entries).
+#
+# ── How it works automatically (no manual involvement needed) ────
+#
+#   1. GitHub reads the `on.schedule` cron expressions below.
+#   2. GitHub's own servers trigger this workflow at the exact UTC
+#      times you define — every day, forever, for FREE.
+#   3. The workflow boots a Linux container, runs your Node.js script,
+#      commits any changes, and shuts down. No server costs ever.
+#   4. The commit triggers GitHub Pages to redeploy, so the live site
+#      automatically reflects the updated history.json.
+#
+# Requirements:
+#   • Google Sheet must be "Anyone with the link → Viewer" (public)
+#   • GitHub Pages enabled on main branch / root folder
+#   • No extra secrets needed — uses built-in GITHUB_TOKEN
+# ================================================================
+
+name: Rate Snapshots (Morning / Afternoon / Evening)
+
+on:
+  schedule:
+    - cron: '45 7  * * *'   # 07:45 UTC — Morning snapshot
+    - cron: '45 13 * * *'   # 13:45 UTC — Afternoon snapshot
+    - cron: '45 23 * * *'   # 23:45 UTC — Evening snapshot (consolidates day)
+
+  # Allow manual trigger from the Actions tab for testing/debugging
+  workflow_dispatch:
+    inputs:
+      run_type:
+        description: 'Force a specific run type (morning | afternoon | evening)'
+        required: false
+        default: 'evening'
+
+permissions:
+  contents: write   # Required to commit history.json back to main branch
+
+jobs:
+  snapshot:
+    name: Capture Rate Snapshot
+    runs-on: ubuntu-latest
+
+    steps:
+
+      # ── 1. Checkout ────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+          fetch-depth: 1
+
+      # ── 2. Node.js runtime ─────────────────────────────────────
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # ── 3. Detect which snapshot run this is ───────────────────
+      #   For scheduled triggers: check current UTC hour.
+      #   For manual triggers: use the input value.
+      - name: Detect run type
+        id: detect_run
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            RUN_TYPE="${{ github.event.inputs.run_type }}"
+          else
+            HOUR=$(date -u +"%H")
+            if   [ "$HOUR" = "07" ]; then RUN_TYPE="morning"
+            elif [ "$HOUR" = "13" ]; then RUN_TYPE="afternoon"
+            else                          RUN_TYPE="evening"
+            fi
+          fi
+          echo "RUN_TYPE=${RUN_TYPE}" >> "$GITHUB_OUTPUT"
+          echo "[Snapshot] Detected run type: ${RUN_TYPE}"
+
+      # ── 4. Fetch rates & update history.json ───────────────────
+      - name: Fetch rates and update history ledger
+        env:
+          RUN_TYPE: ${{ steps.detect_run.outputs.RUN_TYPE }}
+        run: |
+          node << 'EOF'
+          const https  = require('https');
+          const fs     = require('fs');
+          const path   = require('path');
+
+          // ── Configuration ──────────────────────────────────────
+          const SHEET_ID       = '1ZXvoy_yDJEFN5LA3mrCFzg7L2REZ3gY4X4mQIXJ-r1Q';
+          const BUYING_SHEET   = 'Buying Rates Dashboard';
+          const SELLING_SHEET  = 'Selling Rates Dashboard';
+          const HISTORY_FILE   = path.join(process.cwd(), 'public', 'data', 'history.json');
+          const MAX_DAILY_ENTRIES = 30;   // cap after evening consolidation
+
+          // RUN_TYPE is injected from the env step above
+          const RUN_TYPE = process.env.RUN_TYPE || 'evening';
+
+          const CURRENCIES = [
+            { code: 'USD', index: 4  }, { code: 'GBP', index: 5  },
+            { code: 'EUR', index: 6  }, { code: 'AED', index: 7  },
+            { code: 'AUD', index: 8  }, { code: 'BHD', index: 9  },
+            { code: 'CAD', index: 10 }, { code: 'CHF', index: 11 },
+            { code: 'CNY', index: 12 }, { code: 'DKK', index: 13 },
+            { code: 'HKD', index: 14 }, { code: 'JOD', index: 15 },
+            { code: 'JPY', index: 16 }, { code: 'KWD', index: 17 },
+            { code: 'NOK', index: 18 }, { code: 'NZD', index: 19 },
+            { code: 'OMR', index: 20 }, { code: 'QAR', index: 21 },
+            { code: 'RMB', index: 22 }, { code: 'SAR', index: 23 },
+            { code: 'SEK', index: 24 }, { code: 'SGD', index: 25 },
+            { code: 'TBH', index: 26 }, { code: 'ZAR', index: 27 },
+          ];
+
+          // ── Helpers ────────────────────────────────────────────
+
+          function httpsGet(url) {
+            return new Promise((resolve, reject) => {
+              const req = https.get(url, { timeout: 15000 }, res => {
+                let body = '';
+                res.on('data', chunk => body += chunk);
+                res.on('end',  ()    => resolve(body));
+              });
+              req.on('error',   reject);
+              req.on('timeout', () => {
+                req.destroy();
+                reject(new Error('Request timed out: ' + url));
+              });
+            });
+          }
+
+          async function fetchSheet(sheetName) {
+            const url  = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(sheetName)}`;
+            const body = await httpsGet(url);
+            // Strip JSONP: indexOf first '(' and lastIndexOf ')'
+            const startIdx = body.indexOf('google.visualization.Query.setResponse(');
+            if (startIdx === -1) throw new Error(`Bad GViz response for: ${sheetName}`);
+            const jsonStart = body.indexOf('(', startIdx) + 1;
+            const jsonEnd   = body.lastIndexOf(')');
+            return JSON.parse(body.slice(jsonStart, jsonEnd));
+          }
+
+          function cleanValue(v) {
+            if (v === null || v === undefined) return null;
+            if (typeof v === 'number') return isFinite(v) ? parseFloat(v.toFixed(4)) : null;
+            const s = String(v).trim();
+            if (!s || s === '-' || s === '--' || s === '—' || s === '0' ||
+                s.toLowerCase() === 'n/a' || s.toLowerCase() === 'na') return null;
+            const n = parseFloat(s.replace(/,/g, ''));
+            return isNaN(n) ? null : parseFloat(n.toFixed(4));
+          }
+
+          function parseSheet(response) {
+            const rows   = response?.table?.rows ?? [];
+            const result = {};
+            for (const row of rows) {
+              if (!row?.c?.[0]?.v) continue;
+              const bank = String(row.c[0].v).trim();
+              if (!bank || bank.toLowerCase() === 'bank') continue;
+              const rates = {};
+              for (const { code, index } of CURRENCIES) {
+                const cell = row.c[index];
+                rates[code] = cleanValue(cell?.v ?? cell?.f ?? null);
+              }
+              result[bank] = rates;
+            }
+            return result;
+          }
+
+          // ── Main pipeline ──────────────────────────────────────
+          (async () => {
+            const nowUtc  = new Date();
+            const today   = nowUtc.toISOString().split('T')[0];  // YYYY-MM-DD
+            const timeTag = RUN_TYPE === 'morning'   ? '07:45' :
+                            RUN_TYPE === 'afternoon' ? '13:45' : '23:45';
+
+            console.log(`[Snapshot] Run type: ${RUN_TYPE} | Date: ${today} | Time tag: ${timeTag}`);
+
+            // 1. Fetch both sheets in parallel
+            const [buyingResp, sellingResp] = await Promise.all([
+              fetchSheet(BUYING_SHEET),
+              fetchSheet(SELLING_SHEET),
+            ]);
+
+            const buying  = parseSheet(buyingResp);
+            const selling = parseSheet(sellingResp);
+            const bankCount = Object.keys(buying).length;
+            console.log(`[Snapshot] Parsed ${bankCount} banks`);
+
+            if (bankCount === 0) {
+              console.error('[Snapshot] ERROR: No bank data found. Aborting.');
+              process.exit(1);
+            }
+
+            // 2. Load history file (create if missing)
+            const histDir = path.dirname(HISTORY_FILE);
+            if (!fs.existsSync(histDir)) fs.mkdirSync(histDir, { recursive: true });
+
+            let history = [];
+            if (fs.existsSync(HISTORY_FILE)) {
+              try {
+                const raw = fs.readFileSync(HISTORY_FILE, 'utf8');
+                history   = JSON.parse(raw);
+                if (!Array.isArray(history)) history = [];
+              } catch (e) {
+                console.warn('[Snapshot] Could not parse history.json, starting fresh:', e.message);
+                history = [];
+              }
+            }
+
+            // 3. Build the new entry (includes time tag for intraday identification)
+            const newEntry = { date: today, time: timeTag, buying, selling };
+
+            if (RUN_TYPE === 'evening') {
+              // ── EVENING CONSOLIDATION ──────────────────────────
+              // Remove ALL entries for today (morning, afternoon, and any
+              // previous evening re-runs), then add only this final entry.
+              // Then truncate to MAX_DAILY_ENTRIES (one per day).
+              const before = history.length;
+              history = history.filter(e => e.date !== today);
+              const removed = before - history.length;
+              if (removed > 0) {
+                console.log(`[Snapshot] Evening consolidation: removed ${removed} intraday entry(ies) for ${today}`);
+              }
+              history.push(newEntry);
+              history = history.slice(-MAX_DAILY_ENTRIES);
+              console.log(`[Snapshot] After consolidation: ${history.length} daily entries`);
+            } else {
+              // ── INTRADAY SNAPSHOT (morning or afternoon) ───────
+              // Remove only a previous entry with the same date+time (idempotent
+              // re-run safety), then append the fresh snapshot.
+              // We allow up to MAX_DAILY_ENTRIES * 3 entries before evening trims them.
+              history = history.filter(e => !(e.date === today && e.time === timeTag));
+              history.push(newEntry);
+              // Safety cap to prevent unbounded growth if evening never runs
+              history = history.slice(-(MAX_DAILY_ENTRIES * 3));
+              console.log(`[Snapshot] Intraday ${RUN_TYPE}: ${history.length} total entries (will consolidate at 23:45)`);
+            }
+
+            // 4. Write back to disk
+            fs.writeFileSync(HISTORY_FILE, JSON.stringify(history, null, 2), 'utf8');
+            console.log(`[Snapshot] Saved history.json successfully`);
+          })().catch(err => {
+            console.error('[Snapshot] FATAL:', err.message);
+            process.exit(1);
+          });
+          EOF
+
+      # ── 5. Commit & push if history.json changed ───────────────
+      - name: Commit and push history update
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add public/data/history.json
+
+          # Only commit if there are actual changes to avoid empty commits
+          if git diff --cached --quiet; then
+            echo "[Snapshot] No changes to history.json — skipping commit."
+          else
+            SNAPSHOT_DATE=$(date -u +"%Y-%m-%d")
+            SNAPSHOT_TIME=$(date -u +"%H:%M")
+            RUN_TYPE="${{ steps.detect_run.outputs.RUN_TYPE }}"
+            git commit -m "chore(snapshot): ${RUN_TYPE} rate capture ${SNAPSHOT_DATE} ${SNAPSHOT_TIME} UTC [skip ci]"
+            git push origin main
+            echo "[Snapshot] Pushed ${RUN_TYPE} snapshot for ${SNAPSHOT_DATE} ${SNAPSHOT_TIME} UTC"
+          fi
